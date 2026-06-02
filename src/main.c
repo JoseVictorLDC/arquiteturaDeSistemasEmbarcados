@@ -1,87 +1,97 @@
 #include <zephyr/kernel.h>
-#include <zephyr/device.h>
-#include <zephyr/drivers/gpio.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/irq.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <pwm_z42.h>
 
-#define TEMPO_VERDE_MS    5000
-#define TEMPO_AMARELO_MS  2000
-#define TEMPO_VERMELHO_MS 5000
+#define TPM_IRQ_LINE        TPM1_IRQn
+#define TPM_IRQ_PRIORITY    1
+#define TPM_CLK_HZ          48000000ULL
+#define TPM_PRESCALER       128ULL
+#define PWM_PERIOD_US       60000u
+#define PWM_HIGH_US         10u
+#define PWM_MOD_TICKS       (((TPM_CLK_HZ / TPM_PRESCALER) * PWM_PERIOD_US) / 1000000u - 1u)
+#define PWM_HIGH_TICKS      ((((TPM_CLK_HZ / TPM_PRESCALER) * PWM_HIGH_US) + 999999u) / 1000000u)
+#define TPM_PWM_HIGH_TRUE          (TPM_CnSC_MSB_MASK | TPM_CnSC_ELSB_MASK)
 
-#define LED_VERDE_NODE    DT_ALIAS(led0)
-#define LED_AZUL_NODE     DT_ALIAS(led1)
-#define LED_VERMELHO_NODE DT_ALIAS(led2)
+volatile uint16_t captured = 0;
+volatile uint16_t rise_time = 0;
+volatile uint16_t fall_time = 0;
+volatile uint16_t pulse_ticks = 0;
+volatile bool new_measure = false;
 
-#if !DT_NODE_HAS_STATUS(LED_VERDE_NODE, okay)
-#error "led0 não está definido no Device Tree"
-#endif
-
-#if !DT_NODE_HAS_STATUS(LED_AZUL_NODE, okay)
-#error "led1 não está definido no Device Tree"
-#endif
-
-#if !DT_NODE_HAS_STATUS(LED_VERMELHO_NODE, okay)
-#error "led2 não está definido no Device Tree"
-#endif
-
-static const struct gpio_dt_spec led_verde =
-    GPIO_DT_SPEC_GET(LED_VERDE_NODE, gpios);
-
-static const struct gpio_dt_spec led_azul =
-    GPIO_DT_SPEC_GET(LED_AZUL_NODE, gpios);
-
-static const struct gpio_dt_spec led_vermelho =
-    GPIO_DT_SPEC_GET(LED_VERMELHO_NODE, gpios);
-
-static int configurar_led(const struct gpio_dt_spec *led)
+static uint32_t ticks_to_us(uint16_t ticks)
 {
-    if (!gpio_is_ready_dt(led)) {
-        printk("Erro: GPIO %s não está pronto\n", led->port->name);
-        return -1;
-    }
-
-    return gpio_pin_configure_dt(led, GPIO_OUTPUT_INACTIVE);
+    return (uint32_t)(((uint64_t)ticks * TPM_PRESCALER * 1000000ULL) / TPM_CLK_HZ);
 }
 
-static void semaforo_set(int verde, int azul, int vermelho)
+void tpm1_isr(void *arg)
 {
-    gpio_pin_set_dt(&led_verde, verde);
-    gpio_pin_set_dt(&led_azul, azul);
-    gpio_pin_set_dt(&led_vermelho, vermelho);
+    (void)arg;
+
+    if (TPM1->STATUS & TPM_STATUS_CH0F_MASK) {
+        captured = TPM1->CONTROLS[0].CnV;
+
+        TPM1->STATUS = TPM_STATUS_CH0F_MASK;
+
+        if (GPIOA->PDIR & (1u << 12)) {
+            rise_time = captured;
+        } else {
+            fall_time = captured;
+            pulse_ticks = (uint16_t)(fall_time - rise_time);
+            new_measure = true;
+        }
+    }
 }
 
-int main(void)
+void main(void)
 {
-    int ret;
+    uint16_t ticks;
+    uint32_t pulse_us;
+    uint32_t distance_cm_x10;
 
-    ret = configurar_led(&led_verde);
-    if (ret < 0) {
-        return ret;
-    }
+    printk("Iniciando PWM + Input Capture\n");
 
-    ret = configurar_led(&led_azul);
-    if (ret < 0) {
-        return ret;
-    }
+    IRQ_CONNECT(TPM_IRQ_LINE, TPM_IRQ_PRIORITY, tpm1_isr, NULL, 0);
+    irq_enable(TPM_IRQ_LINE);
 
-    ret = configurar_led(&led_vermelho);
-    if (ret < 0) {
-        return ret;
-    }
+    /* PWM de trigger em PTD0 / TPM0_CH0 */
+    pwm_tpm_Init(TPM0, TPM_PLLFLL, PWM_MOD_TICKS, TPM_CLK, PS_128, EDGE_PWM);
+    pwm_tpm_Ch_Init(TPM0, 0, TPM_PWM_HIGH_TRUE, GPIOD, 0);
+    TPM0->CONTROLS[0].CnV = PWM_HIGH_TICKS;
 
-    printk("Semaforo iniciado\n");
+    /* Captura em PTA12 / TPM1_CH0 nas bordas de subida e descida */
+    pwm_tpm_Init(TPM1, TPM_PLLFLL, 65535, TPM_CLK, PS_128, EDGE_PWM);
+    pwm_tpm_Ch_Init(
+        TPM1,
+        0,
+        TPM_INPUT_CAPTURE_RISING | TPM_INPUT_CAPTURE_FALLING | TPM_CHANNEL_INTERRUPT,
+        GPIOA,
+        12
+    );
+
+    printk("PWM gerada em PTD0\n");
+    printk("Input Capture lendo em PTA12\n");
+    printk("Pulso PWM: aproximadamente 10 us a cada 60 ms\n");
 
     while (1) {
-        // Verde ligado
-        semaforo_set(1, 0, 0);
-        k_msleep(TEMPO_VERDE_MS);
+        if (new_measure) {
+            unsigned int key = irq_lock();
+            ticks = pulse_ticks;
+            new_measure = false;
+            irq_unlock(key);
 
-        // "Amarelo" como combinação de verde + azul
-        semaforo_set(1, 0, 1);
-        k_msleep(TEMPO_AMARELO_MS);
+            pulse_us = ticks_to_us(ticks);
+            distance_cm_x10 = (pulse_us * 10u) / 58u;
 
-        // Vermelho ligado
-        semaforo_set(0, 0, 1);
-        k_msleep(TEMPO_VERMELHO_MS);
+            printk("Pulso alto: %u ticks | %u us | Distancia: %u.%u cm\n",
+                   ticks,
+                   pulse_us,
+                   distance_cm_x10 / 10u,
+                   distance_cm_x10 % 10u);
+        }
+
+        k_msleep(100);
     }
-
-    return 0;
 }
