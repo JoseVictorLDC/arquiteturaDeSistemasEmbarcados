@@ -12,7 +12,10 @@
 #include <stdint.h>
 #include "MKL25Z4.h"
 
- 
+#define TPM_INPUT_CAPTURE_RISING   (TPM_CnSC_ELSA_MASK)
+#define TPM_INPUT_CAPTURE_FALLING  (TPM_CnSC_ELSB_MASK)
+#define TPM_CHANNEL_INTERRUPT      (TPM_CnSC_CHIE_MASK)
+
 // TPM clock source select
 // Selects the clock source for the TPM counter clock
 #define TPM_CLK_DIS 	0 	// Clock disabled
