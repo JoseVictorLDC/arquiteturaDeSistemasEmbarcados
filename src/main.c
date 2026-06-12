@@ -1,19 +1,14 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 
-/* ============================================================
- * CONFIGURACOES
- * ============================================================ */
-
 #define STACK_SIZE       1024
 #define THREAD_PRIORITY  5
 
-/* Recurso compartilhado, propositalmente sem sincronizacao */
-volatile int saldo_vitrine = 0;
+/* Recurso compartilhado */
+static int saldo_vitrine = 0;
 
-/* ============================================================
- * THREAD DO PADEIRO
- * ============================================================ */
+/* Mutex que protege saldo_vitrine */
+K_MUTEX_DEFINE(mutex_vitrine);
 
 void thread_padeiro(void *p1, void *p2, void *p3)
 {
@@ -24,6 +19,8 @@ void thread_padeiro(void *p1, void *p2, void *p3)
     while (1) {
         k_sleep(K_SECONDS(1));
 
+        k_mutex_lock(&mutex_vitrine, K_FOREVER);
+
         saldo_vitrine++;
 
         int64_t tempo_ms = k_uptime_get();
@@ -32,12 +29,10 @@ void thread_padeiro(void *p1, void *p2, void *p3)
                (long long)(tempo_ms / 1000),
                (long long)(tempo_ms % 1000),
                saldo_vitrine);
+
+        k_mutex_unlock(&mutex_vitrine);
     }
 }
-
-/* ============================================================
- * THREAD DO CLIENTE
- * ============================================================ */
 
 void thread_cliente(void *p1, void *p2, void *p3)
 {
@@ -48,6 +43,8 @@ void thread_cliente(void *p1, void *p2, void *p3)
     while (1) {
         k_sleep(K_MSEC(1500));
 
+        k_mutex_lock(&mutex_vitrine, K_FOREVER);
+
         saldo_vitrine--;
 
         int64_t tempo_ms = k_uptime_get();
@@ -56,12 +53,10 @@ void thread_cliente(void *p1, void *p2, void *p3)
                (long long)(tempo_ms / 1000),
                (long long)(tempo_ms % 1000),
                saldo_vitrine);
+
+        k_mutex_unlock(&mutex_vitrine);
     }
 }
-
-/* ============================================================
- * CRIACAO DAS THREADS
- * ============================================================ */
 
 K_THREAD_DEFINE(
     padeiro_id,
@@ -87,13 +82,9 @@ K_THREAD_DEFINE(
     0
 );
 
-/* ============================================================
- * MAIN
- * ============================================================ */
-
 int main(void)
 {
-    printk("\n=== PADARIA: PARTE 1 - SEM SINCRONIZACAO ===\n");
+    printk("\n=== PADARIA: PARTE 2 - UTILIZANDO MUTEX ===\n");
     printk("[0.000 s] Saldo inicial: %d\n\n", saldo_vitrine);
 
     return 0;
