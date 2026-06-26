@@ -1,87 +1,46 @@
-#include <zephyr/kernel.h>
-#include <zephyr/device.h>
-#include <zephyr/drivers/gpio.h>
+#include <zephyr/kernel.h>             // Funções básicas do Zephyr (ex: k_msleep, k_thread, etc.)
+#include <zephyr/device.h>             // API para obter e utilizar dispositivos do sistema
+#include <zephyr/drivers/gpio.h>       // API para controle de pinos de entrada/saída (GPIO)
+#include <pwm_z42.h>                // Biblioteca personalizada com funções de controle do TPM (Timer/PWM Module)
+#include <zephyr/sys/printk.h>
+#include <zephyr/console/console.h>
+#include <stdio.h>
+#include <math.h>
 
-#define TEMPO_VERDE_MS    5000
-#define TEMPO_AMARELO_MS  2000
-#define TEMPO_VERMELHO_MS 5000
+#define STACK_SIZE 1024
+#define PADEIRO_PRIORITY 0
+#define CLIENTE_PRIORITY 1
 
-#define LED_VERDE_NODE    DT_ALIAS(led0)
-#define LED_AZUL_NODE     DT_ALIAS(led1)
-#define LED_VERMELHO_NODE DT_ALIAS(led2)
+void Padeiro();
+void Cliente();
 
-#if !DT_NODE_HAS_STATUS(LED_VERDE_NODE, okay)
-#error "led0 não está definido no Device Tree"
-#endif
-
-#if !DT_NODE_HAS_STATUS(LED_AZUL_NODE, okay)
-#error "led1 não está definido no Device Tree"
-#endif
-
-#if !DT_NODE_HAS_STATUS(LED_VERMELHO_NODE, okay)
-#error "led2 não está definido no Device Tree"
-#endif
-
-static const struct gpio_dt_spec led_verde =
-    GPIO_DT_SPEC_GET(LED_VERDE_NODE, gpios);
-
-static const struct gpio_dt_spec led_azul =
-    GPIO_DT_SPEC_GET(LED_AZUL_NODE, gpios);
-
-static const struct gpio_dt_spec led_vermelho =
-    GPIO_DT_SPEC_GET(LED_VERMELHO_NODE, gpios);
-
-static int configurar_led(const struct gpio_dt_spec *led)
-{
-    if (!gpio_is_ready_dt(led)) {
-        printk("Erro: GPIO %s não está pronto\n", led->port->name);
-        return -1;
-    }
-
-    return gpio_pin_configure_dt(led, GPIO_OUTPUT_INACTIVE);
-}
-
-static void semaforo_set(int verde, int azul, int vermelho)
-{
-    gpio_pin_set_dt(&led_verde, verde);
-    gpio_pin_set_dt(&led_azul, azul);
-    gpio_pin_set_dt(&led_vermelho, vermelho);
-}
+long int saldo_vitrine = 0;
 
 int main(void)
 {
-    int ret;
-
-    ret = configurar_led(&led_verde);
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = configurar_led(&led_azul);
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = configurar_led(&led_vermelho);
-    if (ret < 0) {
-        return ret;
-    }
-
-    printk("Semaforo iniciado\n");
-
-    while (1) {
-        // Verde ligado
-        semaforo_set(1, 0, 0);
-        k_msleep(TEMPO_VERDE_MS);
-
-        // "Amarelo" como combinação de verde + azul
-        semaforo_set(1, 0, 1);
-        k_msleep(TEMPO_AMARELO_MS);
-
-        // Vermelho ligado
-        semaforo_set(0, 0, 1);
-        k_msleep(TEMPO_VERMELHO_MS);
-    }
-
+    printk("Padeiro está vendendo. Saldo inicial da vitrine: %lu\n\n", saldo_vitrine);
     return 0;
 }
+
+void Padeiro()
+{
+    for(;;)
+    {
+        k_msleep(1000);
+        saldo_vitrine++;
+        printk("Padeiro adicionou na vitrine. \nSaldo da vitrine: %ld\n\n", saldo_vitrine);
+    }
+}
+
+void Cliente()
+{
+    for(;;)
+    {
+        k_msleep(1000);
+        saldo_vitrine--;
+        printk("Cliente comprou da padaria. \nSaldo da vitrine: %ld\n\n", saldo_vitrine);
+    }
+}
+
+K_THREAD_DEFINE(padeiro, STACK_SIZE, Padeiro, NULL, NULL, NULL, PADEIRO_PRIORITY, 0, 0);
+K_THREAD_DEFINE(cliente, STACK_SIZE, Cliente, NULL, NULL, NULL, CLIENTE_PRIORITY, 0, 0);
