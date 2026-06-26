@@ -1,100 +1,46 @@
-#include <zephyr/kernel.h>
+#include <zephyr/kernel.h>             // Funções básicas do Zephyr (ex: k_msleep, k_thread, etc.)
+#include <zephyr/device.h>             // API para obter e utilizar dispositivos do sistema
+#include <zephyr/drivers/gpio.h>       // API para controle de pinos de entrada/saída (GPIO)
+#include <pwm_z42.h>                // Biblioteca personalizada com funções de controle do TPM (Timer/PWM Module)
 #include <zephyr/sys/printk.h>
+#include <zephyr/console/console.h>
+#include <stdio.h>
+#include <math.h>
 
-/* ============================================================
- * CONFIGURACOES
- * ============================================================ */
+#define STACK_SIZE 1024
+#define PADEIRO_PRIORITY 0
+#define CLIENTE_PRIORITY 1
 
-#define STACK_SIZE       1024
-#define THREAD_PRIORITY  5
+void Padeiro();
+void Cliente();
 
-/* Recurso compartilhado, propositalmente sem sincronizacao */
-volatile int saldo_vitrine = 0;
-
-/* ============================================================
- * THREAD DO PADEIRO
- * ============================================================ */
-
-void thread_padeiro(void *p1, void *p2, void *p3)
-{
-    ARG_UNUSED(p1);
-    ARG_UNUSED(p2);
-    ARG_UNUSED(p3);
-
-    while (1) {
-        k_sleep(K_SECONDS(1));
-
-        saldo_vitrine++;
-
-        int64_t tempo_ms = k_uptime_get();
-
-        printk("[%lld.%03lld s] [PADEIRO] Produziu 1 pao | Saldo: %d\n",
-               (long long)(tempo_ms / 1000),
-               (long long)(tempo_ms % 1000),
-               saldo_vitrine);
-    }
-}
-
-/* ============================================================
- * THREAD DO CLIENTE
- * ============================================================ */
-
-void thread_cliente(void *p1, void *p2, void *p3)
-{
-    ARG_UNUSED(p1);
-    ARG_UNUSED(p2);
-    ARG_UNUSED(p3);
-
-    while (1) {
-        k_sleep(K_MSEC(1500));
-
-        saldo_vitrine--;
-
-        int64_t tempo_ms = k_uptime_get();
-
-        printk("[%lld.%03lld s] [CLIENTE] Retirou 1 pao | Saldo: %d\n",
-               (long long)(tempo_ms / 1000),
-               (long long)(tempo_ms % 1000),
-               saldo_vitrine);
-    }
-}
-
-/* ============================================================
- * CRIACAO DAS THREADS
- * ============================================================ */
-
-K_THREAD_DEFINE(
-    padeiro_id,
-    STACK_SIZE,
-    thread_padeiro,
-    NULL,
-    NULL,
-    NULL,
-    THREAD_PRIORITY,
-    0,
-    0
-);
-
-K_THREAD_DEFINE(
-    cliente_id,
-    STACK_SIZE,
-    thread_cliente,
-    NULL,
-    NULL,
-    NULL,
-    THREAD_PRIORITY,
-    0,
-    0
-);
-
-/* ============================================================
- * MAIN
- * ============================================================ */
+long int saldo_vitrine = 0;
 
 int main(void)
 {
-    printk("\n=== PADARIA: PARTE 1 - SEM SINCRONIZACAO ===\n");
-    printk("[0.000 s] Saldo inicial: %d\n\n", saldo_vitrine);
-
+    printk("Padeiro está vendendo. Saldo inicial da vitrine: %lu\n\n", saldo_vitrine);
     return 0;
 }
+
+void Padeiro()
+{
+    for(;;)
+    {
+        k_msleep(1000);
+        saldo_vitrine++;
+        printk("Padeiro adicionou na vitrine. \nSaldo da vitrine: %ld\n\n", saldo_vitrine);
+    }
+}
+
+void Cliente()
+{
+    for(;;)
+    {
+        k_msleep(1000);
+        saldo_vitrine--;
+        printk("Cliente comprou da padaria. \nSaldo da vitrine: %ld\n\n", saldo_vitrine);
+    }
+}
+
+K_THREAD_DEFINE(padeiro, STACK_SIZE, Padeiro, NULL, NULL, NULL, PADEIRO_PRIORITY, 0, 0);
+K_THREAD_DEFINE(cliente, STACK_SIZE, Cliente, NULL, NULL, NULL, CLIENTE_PRIORITY, 0, 0);
